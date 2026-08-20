@@ -1,0 +1,41 @@
+-- Loaded once by the proxysql-init container against ProxySQL's admin
+-- interface (port 6032). Rendered to generated/proxysql_init.sql by
+-- `make render`. Safe to re-run: everything is idempotent (DELETE+INSERT).
+
+DELETE FROM mysql_servers WHERE hostgroup_id IN (10, 11, 20, 30);
+INSERT INTO mysql_servers (hostgroup_id, hostname, port, weight, comment) VALUES
+    (10, 'pxc-node1', 3306, 1000, 'pxc-node1'),
+    (10, 'pxc-node2', 3306, 1000, 'pxc-node2'),
+    (10, 'pxc-node3', 3306, 1000, 'pxc-node3');
+
+-- Native Galera Cluster support: ProxySQL continuously checks wsrep status
+-- on each backend and moves servers between hostgroups automatically:
+--   10 = writer            11 = backup writer (standby, not used for traffic)
+--   20 = reader            30 = offline / not part of the primary component
+DELETE FROM mysql_galera_hostgroups WHERE writer_hostgroup = 10;
+INSERT INTO mysql_galera_hostgroups
+    (writer_hostgroup, backup_writer_hostgroup, reader_hostgroup, offline_hostgroup,
+     active, max_writers, writer_is_also_reader, max_transactions_behind, comment)
+VALUES
+    (10, 11, 20, 30, 1, 1, 1, 100, '__CLUSTER_NAME__');
+
+DELETE FROM mysql_users WHERE username = '__MYSQL_USER__';
+INSERT INTO mysql_users (username, password, default_hostgroup, transaction_persistent, active) VALUES
+    ('__MYSQL_USER__', '__MYSQL_PASSWORD__', 10, 1, 1);
+
+-- Example read/write split for the app user: plain SELECTs are routed to
+-- the reader hostgroup; SELECT ... FOR UPDATE (and everything else) stays
+-- on the single elected writer.
+DELETE FROM mysql_query_rules WHERE rule_id IN (100, 200);
+INSERT INTO mysql_query_rules (rule_id, active, match_pattern, destination_hostgroup, apply) VALUES
+    (100, 1, '^SELECT.*FOR UPDATE$', 10, 1),
+    (200, 1, '^SELECT', 20, 1);
+
+LOAD MYSQL SERVERS TO RUNTIME;
+LOAD MYSQL USERS TO RUNTIME;
+LOAD MYSQL QUERY RULES TO RUNTIME;
+LOAD MYSQL VARIABLES TO RUNTIME;
+SAVE MYSQL SERVERS TO DISK;
+SAVE MYSQL USERS TO DISK;
+SAVE MYSQL QUERY RULES TO DISK;
+SAVE MYSQL VARIABLES TO DISK;

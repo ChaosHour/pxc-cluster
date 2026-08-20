@@ -1,0 +1,47 @@
+# ProxySQL configuration for the PXC test lab.
+# Rendered to generated/proxysql.cnf by `make render` (placeholders are
+# substituted from .env). mysql_servers / mysql_users / mysql_galera_hostgroups
+# are intentionally NOT set here -- ProxySQL's config-file loader does not
+# support the galera hostgroup table, so those are loaded at runtime by the
+# proxysql-init container via generated/proxysql_init.sql.
+
+datadir="/var/lib/proxysql"
+
+admin_variables=
+{
+    # "admin:admin" only ever accepts connections from 127.0.0.1 (ProxySQL
+    # hard-codes this) and is used by the container healthcheck. The second
+    # pair is the one the proxysql-init container uses over the docker
+    # network, and the one you use from the host via `make proxysql-admin`.
+    admin_credentials="admin:admin;__PROXYSQL_ADMIN_USER__:__PROXYSQL_ADMIN_PASSWORD__"
+    mysql_ifaces="0.0.0.0:6032"
+    refresh_interval=2000
+}
+
+mysql_variables=
+{
+    threads=4
+    max_connections=2048
+    default_query_delay=0
+    default_query_timeout=36000000
+    have_compress=true
+    poll_timeout=2000
+    interfaces="0.0.0.0:6033"
+    default_schema="information_schema"
+    stacksize=1048576
+    connect_timeout_server=3000
+    monitor_username="__PROXYSQL_MONITOR_USER__"
+    monitor_password="__PROXYSQL_MONITOR_PASSWORD__"
+    monitor_history=600000
+    monitor_connect_interval=2000
+    monitor_ping_interval=2000
+    monitor_read_only_interval=1500
+    monitor_read_only_timeout=500
+    monitor_galera_healthcheck_interval=2000
+    monitor_galera_healthcheck_timeout=800
+    ping_interval_server_msec=2000
+    ping_timeout_server=200
+    commands_stats=true
+    sessions_sort=true
+    connect_retries_on_failure=10
+}

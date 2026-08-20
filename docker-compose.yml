@@ -1,0 +1,132 @@
+name: pxc-lab
+
+x-pxc-image: &pxc-image
+  build:
+    context: ./docker/pxc
+    args:
+      PXC_REPO: ${PXC_REPO:-pxc-84-lts}
+  image: pxc-lab/percona-xtradb-cluster:${PXC_REPO:-pxc-84-lts}
+
+x-pxc-common: &pxc-common
+  <<: *pxc-image
+  networks:
+    pxc-net:
+  restart: unless-stopped
+  environment: &pxc-common-env
+    CLUSTER_NAME: ${CLUSTER_NAME:-pxc-cluster}
+    CLUSTER_MEMBERS: pxc-node1,pxc-node2,pxc-node3
+    MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in .env}
+    MYSQL_DATABASE: ${MYSQL_DATABASE:-demo}
+    MYSQL_USER: ${MYSQL_USER:-appuser}
+    MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set MYSQL_PASSWORD in .env}
+    PROXYSQL_MONITOR_USER: ${PROXYSQL_MONITOR_USER:-proxysql_monitor}
+    PROXYSQL_MONITOR_PASSWORD: ${PROXYSQL_MONITOR_PASSWORD:?set PROXYSQL_MONITOR_PASSWORD in .env}
+  healthcheck:
+    test: ["CMD-SHELL", "mysql -uroot -p\"$$MYSQL_ROOT_PASSWORD\" -e \"SHOW STATUS LIKE 'wsrep_ready'\" 2>/dev/null | grep -q ON"]
+    interval: 10s
+    timeout: 5s
+    retries: 30
+    start_period: 60s
+
+services:
+  pxc-node1:
+    <<: *pxc-common
+    container_name: pxc-node1
+    hostname: pxc-node1
+    environment:
+      <<: *pxc-common-env
+      BOOTSTRAP: "true"
+    ports:
+      - "3306:3306"
+    volumes:
+      - pxc-node1-data:/var/lib/mysql
+      - ./sql/02-sample-schema.sql:/docker-entrypoint-initdb.d/02-sample-schema.sql:ro
+
+  pxc-node2:
+    <<: *pxc-common
+    container_name: pxc-node2
+    hostname: pxc-node2
+    depends_on:
+      pxc-node1:
+        condition: service_healthy
+    ports:
+      - "3307:3306"
+    volumes:
+      - pxc-node2-data:/var/lib/mysql
+
+  pxc-node3:
+    <<: *pxc-common
+    container_name: pxc-node3
+    hostname: pxc-node3
+    depends_on:
+      pxc-node2:
+        condition: service_healthy
+    ports:
+      - "3308:3306"
+    volumes:
+      - pxc-node3-data:/var/lib/mysql
+
+  proxysql:
+    image: proxysql/proxysql:${PROXYSQL_VERSION:-2.6.3-debian}
+    container_name: proxysql
+    depends_on:
+      pxc-node1:
+        condition: service_healthy
+      pxc-node2:
+        condition: service_healthy
+      pxc-node3:
+        condition: service_healthy
+    networks:
+      pxc-net:
+    ports:
+      - "6033:6033" # MySQL protocol (application traffic)
+      - "6032:6032" # ProxySQL admin interface
+    volumes:
+      - ./generated/proxysql.cnf:/etc/proxysql.cnf:ro
+      - proxysql-data:/var/lib/proxysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysql -h127.0.0.1 -P6032 -uadmin -padmin -e 'SELECT 1' >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
+  proxysql-init:
+    <<: *pxc-image
+    container_name: proxysql-init
+    depends_on:
+      proxysql:
+        condition: service_healthy
+    networks:
+      pxc-net:
+    volumes:
+      - ./generated/proxysql_init.sql:/tmp/init.sql:ro
+    entrypoint:
+      - bash
+      - -c
+      - |
+        # ProxySQL admin's SQL parser chokes on leading "--" comment lines
+        # when a file is piped in, so strip comments before sending it.
+        grep -v '^--' /tmp/init.sql > /tmp/init.stripped.sql
+        for i in $(seq 1 15); do
+          mysql -h proxysql -P 6032 -u"$$PROXYSQL_ADMIN_USER" -p"$$PROXYSQL_ADMIN_PASSWORD" < /tmp/init.stripped.sql \
+            && echo 'ProxySQL configured for the PXC cluster.' && exit 0
+          echo "ProxySQL admin interface not ready yet, retrying ($$i/15)..."
+          sleep 2
+        done
+        exit 1
+    environment:
+      PROXYSQL_ADMIN_USER: ${PROXYSQL_ADMIN_USER:-cluster_admin}
+      PROXYSQL_ADMIN_PASSWORD: ${PROXYSQL_ADMIN_PASSWORD:?set PROXYSQL_ADMIN_PASSWORD in .env}
+    restart: "no"
+
+networks:
+  pxc-net:
+    driver: bridge
+
+volumes:
+  pxc-node1-data:
+  pxc-node2-data:
+  pxc-node3-data:
+  proxysql-data:

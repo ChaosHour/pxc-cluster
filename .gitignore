@@ -1,0 +1,4 @@
+.env
+generated/*.cnf
+generated/*.sql
+backups/*.sql
