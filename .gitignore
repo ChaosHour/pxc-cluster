@@ -2,3 +2,11 @@
 generated/*.cnf
 generated/*.sql
 backups/*.sql
+
+# OS files
+.DS_Store
+.AppleDouble
+.LSOverride
+ehthumbs.db
+Thumbs.db
+desktop.ini
