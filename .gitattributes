@@ -1,0 +1,5 @@
+# Force LF line endings for shell scripts so the executable bit below
+# actually stays runnable if this repo is ever cloned/edited on Windows
+# (a CRLF-corrupted shebang breaks `docker build` with "bad interpreter").
+docker/pxc/entrypoint.sh text eol=lf
+*.sh text eol=lf
